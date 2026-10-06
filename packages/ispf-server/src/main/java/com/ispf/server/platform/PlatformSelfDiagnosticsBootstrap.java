@@ -15,7 +15,6 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
@@ -66,6 +65,9 @@ public class PlatformSelfDiagnosticsBootstrap {
     private final DashboardService dashboardService;
     private final PlatformMetricsProbeService probeService;
 
+    /** Set when an enabled bootstrap fails. Empty means the contour is ready or not required. */
+    private volatile String bootstrapFailure = "";
+
     public PlatformSelfDiagnosticsBootstrap(
             PlatformMetricsProbeProperties properties,
             ObjectManager objectManager,
@@ -78,9 +80,13 @@ public class PlatformSelfDiagnosticsBootstrap {
         this.probeService = probeService;
     }
 
+    /**
+     * Runs early so the probe device exists before later startup. A failure is recorded for
+     * health and readiness. It must not be thrown: this listener is {@code @Order(40)}, and an
+     * exception aborts {@code ApplicationReadyEvent} before the object tree is marked ready.
+     */
     @EventListener(ApplicationReadyEvent.class)
     @Order(40)
-    @Transactional
     public void ensureSelfDiagnostics() {
         if (!properties.isEnsureOnStartup()) {
             return;
@@ -92,6 +98,7 @@ public class PlatformSelfDiagnosticsBootstrap {
             if (properties.isEnabled()) {
                 probeService.setDiagnosticsProbeEnabled(true);
             }
+            bootstrapFailure = "";
             log.info(
                     "Self-diagnostics ready: device={} dashboard={} (sync={})",
                     PlatformMetricsProbeService.DEVICE_PATH,
@@ -99,9 +106,17 @@ public class PlatformSelfDiagnosticsBootstrap {
                     properties.isEnabled()
             );
         } catch (RuntimeException ex) {
-            log.error("Self-diagnostics bootstrap failed: {}", ex.getMessage());
-            throw new IllegalStateException("Self-diagnostics bootstrap failed: " + ex.getMessage(), ex);
+            bootstrapFailure = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+            log.error("Self-diagnostics bootstrap failed, readiness is down, startup continues: {}", bootstrapFailure);
         }
+    }
+
+    public boolean isContourReady() {
+        return bootstrapFailure.isEmpty();
+    }
+
+    public String bootstrapFailure() {
+        return bootstrapFailure;
     }
 
     private void ensureProbeDevice() {

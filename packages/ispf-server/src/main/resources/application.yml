@@ -54,6 +54,9 @@ management:
   endpoint:
     health:
       show-details: when_authorized
+      group:
+        readiness:
+          include: readinessState,selfDiagnostics
     prometheus:
       access: read_only
   metrics:

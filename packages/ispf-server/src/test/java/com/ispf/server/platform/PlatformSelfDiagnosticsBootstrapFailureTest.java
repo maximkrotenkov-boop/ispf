@@ -8,9 +8,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.health.contributor.Status;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -28,25 +29,33 @@ class PlatformSelfDiagnosticsBootstrapFailureTest {
     PlatformMetricsProbeService probeService;
 
     @Test
-    void bootstrapFailureIsAReadinessError() {
+    void bootstrapFailureMarksReadinessDownAndDoesNotThrow() {
         when(properties.isEnsureOnStartup()).thenReturn(true);
         ObjectTree tree = mock(ObjectTree.class);
         when(objectManager.tree()).thenReturn(tree);
         when(tree.findByPath(anyString())).thenThrow(new IllegalStateException("tree down"));
         PlatformSelfDiagnosticsBootstrap bootstrap = bootstrap();
+        SelfDiagnosticsHealthIndicator health = new SelfDiagnosticsHealthIndicator(bootstrap);
 
-        assertThatThrownBy(bootstrap::ensureSelfDiagnostics)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Self-diagnostics bootstrap failed")
-                .hasMessageContaining("tree down");
+        assertThatCode(bootstrap::ensureSelfDiagnostics).doesNotThrowAnyException();
+
+        assertThat(bootstrap.isContourReady()).isFalse();
+        assertThat(bootstrap.bootstrapFailure()).isEqualTo("tree down");
+        assertThat(health.health().getStatus()).isEqualTo(Status.DOWN);
+        assertThat(health.health().getDetails()).containsEntry("error", "tree down");
     }
 
     @Test
-    void disabledBootstrapDoesNotFailReadiness() {
+    void disabledBootstrapStaysReady() {
         when(properties.isEnsureOnStartup()).thenReturn(false);
         PlatformSelfDiagnosticsBootstrap bootstrap = bootstrap();
+        SelfDiagnosticsHealthIndicator health = new SelfDiagnosticsHealthIndicator(bootstrap);
 
         assertThatCode(bootstrap::ensureSelfDiagnostics).doesNotThrowAnyException();
+
+        assertThat(bootstrap.isContourReady()).isTrue();
+        assertThat(bootstrap.bootstrapFailure()).isEmpty();
+        assertThat(health.health().getStatus()).isEqualTo(Status.UP);
     }
 
     private PlatformSelfDiagnosticsBootstrap bootstrap() {
